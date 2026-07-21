@@ -1,12 +1,11 @@
 from flask import Flask, request, Response
 import requests
+import os
 
 app = Flask(__name__)
 
-# --- CONFIGURATION ---
-PROXY_ORIGIN_DOMAIN = "http://itchproxy-production.up.railway.app" # MUST BE THE DOMAIN OF YOUR PARENT SITE
-TARGET_SITE_BASE_URL = "https://html-classic.itch.zone/html/6957140/BR_WEBGL_NO_WRONG_DRONG/"
-# ---------------------
+# Configuration: Set via environment variable (e.g., PROXY_ORIGIN_DOMAIN=your-website.com)
+PROXY_ORIGIN_DOMAIN = os.getenv('PROXY_ORIGIN_DOMAIN', 'localhost')
 
 def fetch_content(url):
     """Helper function to safely fetch content from a given external URL."""
@@ -20,7 +19,7 @@ def fetch_content(url):
 
 @app.route('/')
 def index():
-    # Handles the root URL request (for testing).
+    """Handles the root URL request (for testing)."""
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -29,8 +28,8 @@ def index():
         <h1>API Proxy Service Running</h1>
         <p>This proxy acts as a middleware reverse proxy.</p>
         <p>To load content, you must send the initial HTML fetch via the /proxy endpoint:</p>
-        <pre><code>/proxy?url=https%3A%2F%2Fexternal-site.com/%3C!-- Start of Content --%3E</code></pre>
-        <p>The subsequent asset requests (CSS, JS) will be caught by the general resource handler.</p>
+        <pre><code>/proxy?url=https%3A%2F%2Fexternal-site.com/index.html</code></pre>
+        <p>Subsequent asset requests (CSS, JS) will be caught by the general resource handler.</p>
     </body>
     </html>
     """
@@ -38,67 +37,52 @@ def index():
 
 @app.route('/proxy')
 def proxy():
-    """
-    Accepts the full target URL via a query parameter 'url' and proxies the request.
-    Example call: /proxy?url=https%3A%2F%2Fexternal-site.com%2Fpage1
-    """
-    # 1. Get the full target URL from the query parameters
+    """Handles the initial HTML document load."""
     target_url = request.args.get('url')
 
     if not target_url:
         return "Error: Missing 'url' parameter in the request.", 400
 
-    print(f"Proxying request for: {target_url}")
+    # Set headers to trick external site into thinking this is a legitimate request
+    headers = {
+        'Content-Type': 'text/html',
+        'X-Frame-Options': f'ALLOW-FROM https://{PROXY_ORIGIN_DOMAIN}',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+        # Force the browser to allow this content from our domain
+        'Access-Control-Allow-Origin': f'https://{PROXY_ORIGIN_DOMAIN}',
+        'Referer': f"https://{PROXY_ORIGIN_DOMAIN}/",
+    }
 
-    try:
-        # 2. Fetch the actual content from the target URL
-        response = requests.get(target_url, timeout=15)
+    response = fetch_content(target_url)
 
-        if response.status_code != 200:
-            return f"Error fetching external content: Status {response.status_code}. Details: {response.reason}", response.status_code
+    if response is None or response.status_code != 200:
+        return f"Failed to load initial page content from {target_url}", response.status_code
 
-        # 3. Set crucial headers to simulate local origin and bypass protections
-        headers = {
-            'Content-Type': response.headers.get('content-type', 'text/html'),
-            # This is essential for frame bypassing common security measures (X-Frame)
-            'X-Frame-Options': f'ALLOW-FROM http://{PROXY_ORIGIN_DOMAIN}',
-            'Referer': f"http://{PROXY_ORIGIN_DOMAIN}/" # Simulate the parent page as referrer
-        }
+    # Parse the original URL and construct a dynamic base for asset requests
+    parsed_base_url = target_url.split('?')[0]  # Remove any query string
+    full_base_domain = PROXY_ORIGIN_DOMAIN if not parsed_base_url.startswith("http") else f"https://{PROXY_ORIGIN_DOMAIN}"
+    dynamic_proxy_url = f"https://{full_base_domain}{parsed_base_url}"
 
-        # 4. Return the content stream, allowing the browser to display it locally
-        return Response(response.content, status=200, headers=headers)
-
-    except requests.exceptions.RequestException as e:
-        return f"Proxy connection error accessing {target_url}: {str(e)}", 503
+    # Stream the HTML content while ensuring headers are correctly set for embedding
+    return Response(response.content, status=200, headers=headers)
 
 @app.route('/<path:subpath>')
 def asset_proxy(subpath):
-    """
-    CATCH-ALL HANDLER for all assets (CSS, JS, images, data files).
-    This route intercepts requests like /Build/file.data.gz or /styles/main.css
-    and assumes they are relative to the TARGET_SITE_BASE_URL.
-    """
-    # Reconstruct the full URL of the asset we need to fetch (e.g., https://external-site.com/Build/file.data.gz)
-    asset_target_url = f"{TARGET_SITE_BASE_URL}{subpath}"
+    """CATCH-ALL HANDLER for all assets (CSS, JS, images, data files)."""
+    # Construct the final URL by appending the subpath to our dynamically derived base URL
+    dynamic_target_url = f"https://{PROXY_ORIGIN_DOMAIN}{request.url_root.replace('/proxy', '')}/{subpath}"
 
-    response = fetch_content(asset_target_url)
+    response = fetch_content(dynamic_target_url)
 
     if response is None or response.status_code != 200:
-         # Return a proper 404 if the asset cannot be found at the external location
-        return f"Asset Not Found: {subpath}", 404
+        return "Asset Not Found", 404
 
-    print(f"Successfully proxied asset: {asset_target_url}")
-
-    # --- Apply Headers for Asset Content ---
+    # Apply necessary headers to ensure browser security policies are bypassed
     headers = {
         'Content-Type': response.headers.get('content-type', 'application/octet-stream'),
-        # Crucial: We rewrite the headers so the browser thinks this file came from us.
-        'X-Frame-Options': f'ALLOW-FROM http://{PROXY_ORIGIN_DOMAIN}',
-        'Referer': f"http://{PROXY_ORIGIN_DOMAIN}/",
+        'Access-Control-Allow-Origin': f'https://{PROXY_ORIGIN_DOMAIN}',
+        'X-Frame-Options': f'ALLOW-FROM https://{PROXY_ORIGIN_DOMAIN}',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     }
 
-    # We return the raw content, preserving mime types and data integrity
     return Response(response.content, status=200, headers=headers)
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000, host='0.0.0.0')
