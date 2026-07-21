@@ -18,6 +18,24 @@ def fetch_content(url):
         print(f"Error fetching {url}: {str(e)}")
         return None
 
+@app.route('/')
+def index():
+    # Handles the root URL request (for testing).
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Proxy Gateway</title></head>
+    <body style="padding: 20px;">
+        <h1>API Proxy Service Running</h1>
+        <p>This proxy acts as a middleware reverse proxy.</p>
+        <p>To load content, you must send the initial HTML fetch via the /proxy endpoint:</p>
+        <pre><code>/proxy?url=https%3A%2F%2Fexternal-site.com/%3C!-- Start of Content --%3E</code></pre>
+        <p>The subsequent asset requests (CSS, JS) will be caught by the general resource handler.</p>
+    </body>
+    </html>
+    """
+    return html_content
+
 @app.route('/proxy')
 def proxy():
     """
