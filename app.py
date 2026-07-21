@@ -4,7 +4,7 @@ import requests
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-PROXY_ORIGIN_DOMAIN = "file:///home/mingamer/Documents/GitHub/iFrameProxy/index.html" # MUST BE THE DOMAIN OF YOUR PARENT SITE
+PROXY_ORIGIN_DOMAIN = "itchproxy-production.up.railway.app" # MUST BE THE DOMAIN OF YOUR PARENT SITE
 TARGET_SITE_BASE_URL = "https://html-classic.itch.zone/html/6957140/BR_WEBGL_NO_WRONG_DRONG/"
 # ---------------------
 
